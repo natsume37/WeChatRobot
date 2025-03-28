@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-
+import json
 import logging
 import re
 import time
@@ -14,7 +14,7 @@ from base.func_bard import BardAssistant
 from base.func_chatglm import ChatGLM
 from base.func_ollama import Ollama
 from base.func_chatgpt import ChatGPT
-from base.func_chengyu import cy
+from base.func_chengyu import cy, CONTEXT_FILE
 from base.func_weather import Weather
 from base.func_news import News
 from base.func_tigerbot import TigerBot
@@ -24,6 +24,13 @@ from constants import ChatType
 from job_mgmt import Job
 
 __version__ = "39.2.4.0"
+
+BOT_FUNC = {
+    1: "成语接龙（没反应代表不是成语）：#开头",
+    2: "成语答疑：？开头",
+    3: "积分排行榜：%查询",
+    4: "成语重置：#重置",
+}
 
 
 class Robot(Job):
@@ -97,25 +104,90 @@ class Robot(Job):
         :return: 处理状态，`True` 成功，`False` 失败
         """
         status = False
-        texts = re.findall(r"^([#?？])(.*)$", msg.content)
-        # [('#', '天天向上')]
+        texts = re.findall(r"^([#?？!！%])(.*)$", msg.content)
+
         if texts:
-            flag = texts[0][0]
-            text = texts[0][1]
+            flag, text = texts[0]
+            wxid = msg.sender  # 以房间ID或用户ID区分不同用户的接龙状态
+
             if flag == "#":  # 接龙
-                if cy.isChengyu(text):
-                    rsp = cy.getNext(text)
-                    if rsp:
-                        self.sendTextMsg(rsp, msg.roomid)
-                        status = True
-            elif flag in ["?", "？"]:  # 查词
+                if text == "菜单":
+                    output = "\n".join(map(lambda x: json.dumps(BOT_FUNC[x], ensure_ascii=False), BOT_FUNC))
+                    self.sendTextMsg(msg=output, receiver=msg.roomid, at_list=msg.sender)
+                elif text == "重置":
+                    res = cy.reset_current_chengyu(msg.sender)
+                    self.sendTextMsg(msg=res, receiver=msg.roomid, at_list=msg.sender)
+                elif cy.isChengyu(text):
+                    last_chengyu = cy.context.get(wxid, None)
+
+                    if last_chengyu:  # 用户正在接龙
+                        if cy.can_connect(last_chengyu, text):
+                            cy.add_score(wxid, 10)  # 用户正确接龙，增加积分
+                            cy.context[wxid] = text  # 更新当前成语
+                            cy.save_json(CONTEXT_FILE, cy.context)  # 保存更新后的成语上下文
+                            self.sendTextMsg(
+                                f"接龙成功！请继续接龙：{cy.getNext(text)} 🎉 +10积分，当前积分：{cy.get_score(wxid)}",
+                                msg.roomid)
+                            status = True
+                        else:
+                            # 用户失败，增加失败次数
+                            cy.failure_count[wxid] = cy.failure_count.get(wxid, 0) + 1
+
+                            if cy.failure_count[wxid] >= 3:
+                                # 失败次数达到三次，更新当前成语并重置失败计数
+                                cy.update_current_chengyu(wxid)
+                                self.sendTextMsg(f"接龙失败次数过多，当前成语已更新。新的成语是：{cy.context[wxid]}",
+                                                 msg.roomid)
+                            else:
+                                self.sendTextMsg(f"接龙失败！{text} 不能接在 {last_chengyu} 后面，请重新开始。",
+                                                 msg.roomid)
+                    else:
+                        # 用户未在接龙状态，随机生成一个成语
+                        next_chengyu = cy.getNext(text)
+                        if next_chengyu:
+                            cy.context[wxid] = next_chengyu
+                            cy.save_json(CONTEXT_FILE, cy.context)  # 保存更新后的成语上下文
+                            self.sendTextMsg(f"接龙开始！第一个成语是：{next_chengyu}，请继续接龙。", msg.roomid)
+                            status = True
+
+            elif flag in ["?", "？"]:  # 查成语含义
                 if cy.isChengyu(text):
                     rsp = cy.getMeaning(text)
                     if rsp:
                         self.sendTextMsg(rsp, msg.roomid)
                         status = True
 
+            elif msg.content in ["!成语", "！成语"]:  # 查询当前成语
+                last_chengyu = cy.context.get(wxid, None)
+                if last_chengyu:
+                    self.sendTextMsg(f"当前接龙成语是：{last_chengyu}", msg.roomid)
+                else:
+                    self.sendTextMsg("您目前没有进行接龙。", msg.roomid)
+                status = True
+            elif flag in ["%", "%"]:
+                if text == "查询":
+                    res = self.get_leaderboard(msg)
+                    self.sendTextMsg(res, msg.roomid, at_list=msg.sender)
         return status
+
+    def get_leaderboard(self, msg: WxMsg):
+        # 排序并获取前 5 名
+        leaderboard = sorted(cy.scores.items(), key=lambda x: x[1], reverse=True)[:5]
+
+        # 查找用户的排名
+        user_rank = next(((idx + 1, score) for idx, (user_id, score) in enumerate(leaderboard) if user_id == msg.sender),
+                         None)
+        # f" @{self.wcf.get_alias_in_chatroom(wxid, receiver)}"
+        # 格式化输出
+        leaderboard_str = "\n".join(
+            [f"第{idx + 1}名：@{self.wcf.get_alias_in_chatroom(user_id,msg.roomid )} - {score}分" for idx, (user_id, score) in enumerate(leaderboard)])
+
+        if user_rank:
+            user_rank_str = f"您的排名：第{user_rank[0]}名 - {user_rank[1]}分"
+        else:
+            user_rank_str = "您不在前 5 名内。"
+
+        return f"排行榜前 5 名：\n{leaderboard_str}\n\n{user_rank_str}"
 
     def toChitchat(self, msg: WxMsg) -> bool:
         """闲聊，接入 ChatGPT
@@ -154,7 +226,6 @@ class Robot(Job):
 
             if msg.is_at(self.wxid):  # 被@
                 self.toAt(msg)
-
             else:  # 其他消息
                 self.toChengyu(msg)
 
@@ -216,7 +287,7 @@ class Robot(Job):
             # 清除超过1分钟的记录
             self._msg_timestamps = [t for t in self._msg_timestamps if now - t < 60]
             if len(self._msg_timestamps) >= self.config.SEND_RATE_LIMIT:
-                self.LOG.warning("发送消息过快，已达到每分钟"+self.config.SEND_RATE_LIMIT+"条上限。")
+                self.LOG.warning("发送消息过快，已达到每分钟" + self.config.SEND_RATE_LIMIT + "条上限。")
                 return
             self._msg_timestamps.append(now)
 
