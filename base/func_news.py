@@ -29,17 +29,19 @@ class News(object):
             timestamp = data["time"]
             ts = time.localtime(timestamp)
             weekday_news = datetime(*ts[:6]).weekday()
+
         except Exception as e:
             self.LOG.error(e)
             return ""
 
         weekday_now = datetime.now().weekday()
         if weekday_news != weekday_now:
-            return ""  # 旧闻，观察发现周二～周六早晨6点半左右发布
+            return "周日周一暂无隔夜新闻！"  # 旧闻，观察发现周二～周六早晨6点半左右发布
 
         fmt_time = time.strftime("%Y年%m月%d日", ts)
 
         news = re.sub(r"(\d{1,2}、)", r"\n\1", news)
+
         fmt_news = "".join(etree.HTML(news).xpath(" // text()"))
         fmt_news = re.sub(r"周[一|二|三|四|五|六|日]你需要知道的", r"", fmt_news)
 
