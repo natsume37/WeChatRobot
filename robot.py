@@ -4,6 +4,7 @@ import logging
 import re
 import time
 import xml.etree.ElementTree as ET
+from functools import wraps
 from queue import Empty
 from threading import Thread
 from base.func_zhipu import ZhiPu
@@ -25,13 +26,6 @@ from job_mgmt import Job
 
 __version__ = "39.2.4.0"
 
-BOT_FUNC = {
-    1: "成语接龙（没反应代表不是成语）：#开头",
-    2: "成语答疑：？开头",
-    3: "积分排行榜：%查询",
-    4: "成语重置：#重置",
-}
-
 
 class Robot(Job):
     """个性化自己的机器人
@@ -44,6 +38,11 @@ class Robot(Job):
         self.wxid = self.wcf.get_self_wxid()
         self.allContacts = self.getAllContacts()
         self._msg_timestamps = []
+        self.BOT_FUNC = {
+            '#菜单': self.botMenu,
+            '#转发': self.botForward,
+            '#新闻': self.newsReport,
+        }
 
         if ChatType.is_in_chat_types(chat_type):
             if chat_type == ChatType.TIGER_BOT.value and TigerBot.value_check(self.config.TIGERBOT):
@@ -90,6 +89,67 @@ class Robot(Job):
             return all(value is not None for key, value in args.items() if key != 'proxy')
         return False
 
+    def is_bot_command(func):
+        """装饰器判断消息是否为机器人指令，执行相应的操作"""
+
+        @wraps(func)
+        def wrapper(self, msg):
+            texts = re.findall(r"^([#?？!！%])([\s\S]*)$", msg.content)
+            # print(f"texts:{texts}")
+            if texts:
+                flag, text = texts[0]  # 拆分符号和文本内容
+                matches = re.findall(r"^(转发)([\s\S]*)$", text)
+                commends, content = matches[0] if matches else (None, None)
+                print(f"commends:{commends}  content:{content}")
+
+                if flag == "#":
+                    if text == "菜单":
+                        # print("菜单函数")
+                        self.botMenu(msg)
+
+                    elif text == "新闻":
+                        # print("新闻函数")
+                        self.newsReport(msg)
+                    elif commends == "转发" and content:
+                        # print("转发函数")
+                        self.botForward(msg)
+                    # elif text == "类型":
+                    #     res = self.get_all_type_msg()
+                    #     file_path = "output.json"  # 在脚本所在目录保存
+                    #     # file_path = "/output.json"  # 在 Linux 或 macOS 根目录（需要权限）
+                    #
+                    #     with open(file_path, "w", encoding="utf-8") as f:
+                    #         json.dump(res, f, ensure_ascii=False, indent=4)
+
+                    return  # 直接跳过，不执行原函数
+
+            # 如果没有命中指令，执行原函数
+            return func(self, msg)
+
+        return wrapper
+
+        return wrapper
+
+    def botForward(self, msg: WxMsg):
+        if msg.sender not in self.config.ROOTIDS:
+            return
+        try:
+            for i in self.config.BOT_TEXT_FORWARD:
+                self.sendTextMsg(msg.content, i)
+        except Exception as e:
+            self.LOG.error(f"转发函数内部：{e}")
+            return
+
+    def botMenu(self, msg: WxMsg) -> bool:
+        """
+        return: 返回机器人菜单
+        """
+        menu = "\n".join(self.BOT_FUNC.keys())
+        if menu:
+            self.sendTextMsg(menu, msg.sender)
+            return True
+        return False
+
     def toAt(self, msg: WxMsg) -> bool:
         """处理被 @ 消息
         :param msg: 微信消息结构
@@ -104,91 +164,27 @@ class Robot(Job):
         :return: 处理状态，`True` 成功，`False` 失败
         """
         status = False
-        texts = re.findall(r"^([#?？!！%])(.*)$", msg.content)
-
+        texts = re.findall(r"^([#?？])(.*)$", msg.content)
+        # [('#', '天天向上')]
         if texts:
-            flag, text = texts[0]
-            wxid = msg.sender  # 以房间ID或用户ID区分不同用户的接龙状态
-
+            flag = texts[0][0]
+            text = texts[0][1]
             if flag == "#":  # 接龙
-                if text == "菜单":
-                    output = "\n".join(map(lambda x: json.dumps(BOT_FUNC[x], ensure_ascii=False), BOT_FUNC))
-                    self.sendTextMsg(msg=output, receiver=msg.roomid, at_list=msg.sender)
-                elif text == "重置":
-                    res = cy.reset_current_chengyu(msg.sender)
-                    self.sendTextMsg(msg=res, receiver=msg.roomid, at_list=msg.sender)
-                elif cy.isChengyu(text):
-                    last_chengyu = cy.context.get(wxid, None)
-
-                    if last_chengyu:  # 用户正在接龙
-                        if cy.can_connect(last_chengyu, text):
-                            cy.add_score(wxid, 10)  # 用户正确接龙，增加积分
-                            cy.context[wxid] = text  # 更新当前成语
-                            cy.save_json(CONTEXT_FILE, cy.context)  # 保存更新后的成语上下文
-                            self.sendTextMsg(
-                                f"接龙成功！请继续接龙：{cy.getNext(text)} 🎉 +10积分，当前积分：{cy.get_score(wxid)}",
-                                msg.roomid)
-                            status = True
-                        else:
-                            # 用户失败，增加失败次数
-                            cy.failure_count[wxid] = cy.failure_count.get(wxid, 0) + 1
-
-                            if cy.failure_count[wxid] >= 3:
-                                # 失败次数达到三次，更新当前成语并重置失败计数
-                                cy.update_current_chengyu(wxid)
-                                self.sendTextMsg(f"接龙失败次数过多，当前成语已更新。新的成语是：{cy.context[wxid]}",
-                                                 msg.roomid)
-                            else:
-                                self.sendTextMsg(f"接龙失败！{text} 不能接在 {last_chengyu} 后面，请重新开始。",
-                                                 msg.roomid)
-                    else:
-                        # 用户未在接龙状态，随机生成一个成语
-                        next_chengyu = cy.getNext(text)
-                        if next_chengyu:
-                            cy.context[wxid] = next_chengyu
-                            cy.save_json(CONTEXT_FILE, cy.context)  # 保存更新后的成语上下文
-                            self.sendTextMsg(f"接龙开始！第一个成语是：{next_chengyu}，请继续接龙。", msg.roomid)
-                            status = True
-
-            elif flag in ["?", "？"]:  # 查成语含义
+                if cy.isChengyu(text):
+                    rsp = cy.getNext(text)
+                    if rsp:
+                        self.sendTextMsg(rsp, msg.roomid)
+                        status = True
+            elif flag in ["?", "？"]:  # 查词
                 if cy.isChengyu(text):
                     rsp = cy.getMeaning(text)
                     if rsp:
                         self.sendTextMsg(rsp, msg.roomid)
                         status = True
 
-            elif msg.content in ["!成语", "！成语"]:  # 查询当前成语
-                last_chengyu = cy.context.get(wxid, None)
-                if last_chengyu:
-                    self.sendTextMsg(f"当前接龙成语是：{last_chengyu}", msg.roomid)
-                else:
-                    self.sendTextMsg("您目前没有进行接龙。", msg.roomid)
-                status = True
-            elif flag in ["%", "%"]:
-                if text == "查询":
-                    res = self.get_leaderboard(msg)
-                    self.sendTextMsg(res, msg.roomid, at_list=msg.sender)
         return status
 
-    def get_leaderboard(self, msg: WxMsg):
-        # 排序并获取前 5 名
-        leaderboard = sorted(cy.scores.items(), key=lambda x: x[1], reverse=True)[:5]
-
-        # 查找用户的排名
-        user_rank = next(((idx + 1, score) for idx, (user_id, score) in enumerate(leaderboard) if user_id == msg.sender),
-                         None)
-        # f" @{self.wcf.get_alias_in_chatroom(wxid, receiver)}"
-        # 格式化输出
-        leaderboard_str = "\n".join(
-            [f"第{idx + 1}名：@{self.wcf.get_alias_in_chatroom(user_id,msg.roomid )} - {score}分" for idx, (user_id, score) in enumerate(leaderboard)])
-
-        if user_rank:
-            user_rank_str = f"您的排名：第{user_rank[0]}名 - {user_rank[1]}分"
-        else:
-            user_rank_str = "您不在前 5 名内。"
-
-        return f"排行榜前 5 名：\n{leaderboard_str}\n\n{user_rank_str}"
-
+    @is_bot_command
     def toChitchat(self, msg: WxMsg) -> bool:
         """闲聊，接入 ChatGPT
         """
@@ -226,6 +222,7 @@ class Robot(Job):
 
             if msg.is_at(self.wxid):  # 被@
                 self.toAt(msg)
+
             else:  # 其他消息
                 self.toChengyu(msg)
 
@@ -327,6 +324,7 @@ class Robot(Job):
             time.sleep(1)
 
     def autoAcceptFriendRequest(self, msg: WxMsg) -> None:
+        self.LOG.debug("开始处理好友申请")
         try:
             xml = ET.fromstring(msg.content)
             v3 = xml.attrib["encryptusername"]
@@ -344,14 +342,23 @@ class Robot(Job):
             self.allContacts[msg.sender] = nickName[0]
             self.sendTextMsg(f"Hi {nickName[0]}，我自动通过了你的好友请求。", msg.sender)
 
-    def newsReport(self) -> None:
-        receivers = self.config.NEWS
-        if not receivers:
-            return
+    def newsReport(self, msg: WxMsg) -> None:
+        # receivers = self.config.NEWS
+        # if not receivers:
+        #     return
 
         news = News().get_important_news()
-        for r in receivers:
-            self.sendTextMsg(news, r)
+        # for r in receivers:
+        if msg.from_group():
+            self.sendTextMsg(news, msg.roomid)
+        else:
+            self.sendTextMsg(news, msg.sender)
+
+    def get_all_type_msg(self) -> dict:
+        """
+        获取所有消息类型
+        """
+        return self.wcf.get_msg_types()
 
     def weatherReport(self) -> None:
         receivers = self.config.WEATHER
