@@ -89,6 +89,7 @@ class Robot(Job):
             return all(value is not None for key, value in args.items() if key != 'proxy')
         return False
 
+    # 机器人指令识别
     def is_bot_command(func):
         """装饰器判断消息是否为机器人指令，执行相应的操作"""
 
@@ -125,8 +126,6 @@ class Robot(Job):
 
             # 如果没有命中指令，执行原函数
             return func(self, msg)
-
-        return wrapper
 
         return wrapper
 
