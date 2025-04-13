@@ -4,7 +4,6 @@ import json
 import pandas as pd
 
 # 定义文件路径
-SCORE_FILE = "chengyu_scores.json"
 CONTEXT_FILE = "chengyu_context.json"
 ERROR_FILE = "chengyu_errors.json"  # 记录用户错误次数
 FAILURE_COUNT_FILE = "failure_count.json"  # 记录用户失败次数
@@ -15,8 +14,7 @@ class Chengyu:
         # 获取当前脚本路径，读取数据文件
         root = os.path.dirname(os.path.abspath(__file__))
         self.df = pd.read_csv(f"{root}/chengyu.csv", delimiter="\t")
-        self.cys, self.zis, self.yins = self._build_data()
-        self.scores = self.load_json(SCORE_FILE)
+        self.cys, self.zis, self.yins, self.eys = self._build_data()
         self.context = self.load_json(CONTEXT_FILE)
         self.errors = self.load_json(ERROR_FILE)  # 加载错误次数
         self.failure_count = self.load_json(FAILURE_COUNT_FILE)  # 加载失败次数
@@ -31,10 +29,11 @@ class Chengyu:
 
         # 构建字典数据
         cys = dict(zip(df["chengyu"], df["moyin"]))  # 成语与拼音末字的映射
+        eys = dict(zip(df["chengyu"], df["shouyin"])) # 成语与拼音首字的映射
         zis = df.groupby("shouzi").agg({"chengyu": set})["chengyu"].to_dict()  # 按首字分组
         yins = df.groupby("shouyin").agg({"chengyu": set})["chengyu"].to_dict()  # 按首音分组
 
-        return cys, zis, yins
+        return cys, zis, yins, eys
 
     def load_json(self, filename):
         # 加载JSON文件
@@ -93,7 +92,7 @@ class Chengyu:
                 return False, "没有找到可以接龙的成语。"
         elif use_pinyin:
             last_pinyin_of_current = self.cys.get(current_chengyu)
-            first_pinyin_of_input = self.cys.get(cy)
+            first_pinyin_of_input = self.eys.get(cy)
 
             # 判断拼音首音是否相同
             if last_pinyin_of_current == first_pinyin_of_input:
@@ -146,7 +145,7 @@ cy = Chengyu()
 # 测试代码
 if __name__ == "__main__":
     game = Chengyu()
-    wxid = "user_123"
+    wxid = "wxid_n47csnzlp2c522"
 
     # 测试接龙判断
-    print(game.getNext(wxid, "老妪能解", use_pinyin=True))  # 启用谐音接龙
+    print(game.getNext(wxid, "肆意妄为", use_pinyin=True))  # 启用谐音接龙
