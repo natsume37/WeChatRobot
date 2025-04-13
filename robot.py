@@ -23,6 +23,7 @@ from base.func_xinghuo_web import XinghuoWeb
 from configuration import Config
 from constants import ChatType
 from job_mgmt import Job
+import db
 
 __version__ = "39.2.4.0"
 
@@ -42,6 +43,11 @@ class Robot(Job):
             '#菜单': self.botMenu,
             '#转发': self.botForward,
             '#新闻': self.newsReport,
+            "#成语": "",
+            "？成语": "",
+            "#当前成语": "",
+            "#重置成语": "",
+
         }
 
         if ChatType.is_in_chat_types(chat_type):
@@ -101,27 +107,20 @@ class Robot(Job):
                 flag, text = texts[0]  # 拆分符号和文本内容
                 matches = re.findall(r"^(转发)([\s\S]*)$", text)
                 commends, content = matches[0] if matches else (None, None)
-                print(f"commends:{commends}  content:{content}")
 
                 if flag == "#":
                     if text == "菜单":
                         # print("菜单函数")
                         self.botMenu(msg)
-
                     elif text == "新闻":
                         # print("新闻函数")
                         self.newsReport(msg)
+                        db.update_user_points(msg.sender, -1)
                     elif commends == "转发" and content:
                         # print("转发函数")
                         self.botForward(msg)
-                    # elif text == "类型":
-                    #     res = self.get_all_type_msg()
-                    #     file_path = "output.json"  # 在脚本所在目录保存
-                    #     # file_path = "/output.json"  # 在 Linux 或 macOS 根目录（需要权限）
-                    #
-                    #     with open(file_path, "w", encoding="utf-8") as f:
-                    #         json.dump(res, f, ensure_ascii=False, indent=4)
-
+                    elif text == "积分":
+                        self.get_wx_points(msg)
                     return  # 直接跳过，不执行原函数
 
             # 如果没有命中指令，执行原函数
@@ -129,7 +128,62 @@ class Robot(Job):
 
         return wrapper
 
-    def botForward(self, msg: WxMsg):
+    def is_chengyu_command(func):
+        """装饰器判断消息是否为成语相关指令，执行相应的操作"""
+
+        @wraps(func)
+        def wrapper(self, msg):
+            # 匹配以#开头的成语指令
+            texts = re.findall(r"^([#?？])(.*)$", msg.content)
+            if texts:
+                flag, text = texts[0]  # 拆分符号和文本内容  # 获取用户的微信ID
+                # 处理不同的成语相关指令
+                if flag == "#":
+                    if cy.isChengyu(text):
+                        rsp = cy.getNext(msg.sender, text)
+                        if rsp[0]:
+                            rsp += "\n积分+1"
+                            self.sendTextMsg(rsp[1], msg.roomid, msg.sender)
+                            db.update_user_points(msg.sender, 1)
+                            return
+                    elif flag in ["?", "？"]:  # 查词
+                        if cy.isChengyu(text):
+                            rsp = cy.getMeaning(text)
+                            if rsp:
+                                self.sendTextMsg(rsp, msg.roomid, msg.sender)
+                                return
+                    elif text == "当前成语":
+                        # 查询当前成语
+                        self.sendTextMsg(cy.query_current_chengyu(msg.sender), msg.roomid, msg.sender)
+                        return
+                    elif text == "重置成语":
+                        # 重置成语
+                        self.sendTextMsg(cy.reset_current_chengyu(msg.sender), msg.roomid, msg.sender)
+                        return
+                elif flag in ["?", "？"]:
+                    # 查询成语的意义
+                    self.sendTextMsg(cy.getMeaning(text), msg.roomid, msg.sender)
+                    return
+            return func(self, msg)  # 如果不是成语指令，执行原函数
+
+        return wrapper
+
+    def get_wx_points(self, msg: WxMsg):
+        points = db.get_points(msg.sender)
+        if msg.from_group():
+            res = f"你当前的积分为：{points}"
+            self.sendTextMsg(res, msg.roomid, msg.sender)
+        else:
+            res = f'你的当前积分为 {points}'
+            self.sendTextMsg(res, msg.sender)
+        return True
+
+    def botForward(self, msg: WxMsg) -> None:
+        """
+        转发消息
+        @param msg:
+        @return: None
+        """
         if msg.sender not in self.config.ROOTIDS:
             return
         try:
@@ -154,42 +208,26 @@ class Robot(Job):
         :param msg: 微信消息结构
         :return: 处理状态，`True` 成功，`False` 失败
         """
+        db.get_or_create_user_by_wechat_id(msg.sender)
         return self.toChitchat(msg)
 
-    def toChengyu(self, msg: WxMsg) -> bool:
-        """
-        处理成语查询/接龙消息
-        :param msg: 微信消息结构
-        :return: 处理状态，`True` 成功，`False` 失败
-        """
-        status = False
-        texts = re.findall(r"^([#?？])(.*)$", msg.content)
-        # [('#', '天天向上')]
-        if texts:
-            flag = texts[0][0]
-            text = texts[0][1]
-            if flag == "#":  # 接龙
-                if cy.isChengyu(text):
-                    rsp = cy.getNext(text)
-                    if rsp:
-                        self.sendTextMsg(rsp, msg.roomid)
-                        status = True
-            elif flag in ["?", "？"]:  # 查词
-                if cy.isChengyu(text):
-                    rsp = cy.getMeaning(text)
-                    if rsp:
-                        self.sendTextMsg(rsp, msg.roomid)
-                        status = True
-
-        return status
-
-    @is_bot_command
     def toChitchat(self, msg: WxMsg) -> bool:
         """闲聊，接入 ChatGPT
         """
         if not self.chat:  # 没接 ChatGPT，固定回复
             rsp = "你@我干嘛？"
+
         else:  # 接了 ChatGPT，智能回复
+            points = db.get_points(msg.sender)
+            if points < 1:
+                rsp = "积分不足！"
+                if msg.from_group():
+
+                    self.sendTextMsg(rsp, msg.roomid, msg.sender)
+                    return False
+                else:
+                    self.sendTextMsg(rsp, msg.sender)
+                    return False
             q = re.sub(r"@.*?[\u2005|\s]", "", msg.content).replace(" ", "")
             rsp = self.chat.get_answer(q, (msg.roomid if msg.from_group() else msg.sender))
 
@@ -198,12 +236,14 @@ class Robot(Job):
                 self.sendTextMsg(rsp, msg.roomid, msg.sender)
             else:
                 self.sendTextMsg(rsp, msg.sender)
-
+            db.update_user_points(msg.sender, -1)
             return True
         else:
             self.LOG.error(f"无法从 ChatGPT 获得答案")
             return False
 
+    @is_chengyu_command
+    @is_bot_command
     def processMsg(self, msg: WxMsg) -> None:
         """当接收到消息的时候，会调用本方法。如果不实现本方法，则打印原始消息。
         此处可进行自定义发送的内容,如通过 msg.content 关键字自动获取当前天气信息，并发送到对应的群组@发送者

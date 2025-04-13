@@ -44,3 +44,5 @@ class Config(object):
         self.SEND_RATE_LIMIT = yconfig.get("send_rate_limit", 0)
         self.ROOTIDS = yconfig["roots"]["wxids"]
         self.BOT_TEXT_FORWARD = yconfig["forward"]["receivers"]
+        # mysql
+        self.URL = yconfig['mysql']['url']
