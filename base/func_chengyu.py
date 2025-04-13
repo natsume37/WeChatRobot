@@ -52,25 +52,29 @@ class Chengyu:
         """检查给定的成语是否在字典中"""
         return cy in self.cys
 
-    def getNext(self, wxid: str, cy: str):
+    def getNext(self, wxid: str, cy: str, use_pinyin=True):
         """
         判断用户输入的成语与当前接龙成语是否可以接龙
         如果能接龙返回下一个成语，并保存到上下文
         如果不能接龙返回 False
+        :param wxid: 用户的微信ID
+        :param cy: 用户输入的成语
+        :param use_pinyin: 是否启用谐音接龙，默认为 True
         """
         # 获取当前接龙的成语
-        current_chengyu = self.context.get(wxid)
+        current_chengyu = self.context.get(wxid, None)
 
         # 如果当前没有接龙的成语，随机选一个成语
         if not current_chengyu:
+            # 系统选择一个随机成语，作为初始状态
             current_chengyu = random.choice(list(self.cys.keys()))
             self.context[wxid] = current_chengyu  # 保存用户上下文
             self.save_json(CONTEXT_FILE, self.context)  # 保存上下文到文件
-            return f"当前没有进行中的接龙，系统随机选择了一个成语：{current_chengyu}，请继续接龙。"
+            return True, f"当前没有进行中的接龙，系统随机选择了一个成语：{current_chengyu}，请继续接龙。"
 
-        # 判断用户输入的成语是否能够接龙
+        # 判断用户输入的成语是否存在于字典中
         if not self.isChengyu(cy):  # 如果输入的成语不在字典中，返回 False
-            return "输入的成语不在成语字典中，请重新输入。"
+            return False, "你输入的成语不在字典库中，请重新输入。"
 
         # 当前成语的最后一个字
         last_char_of_current = current_chengyu[-1]
@@ -78,21 +82,30 @@ class Chengyu:
         # 用户输入的成语的第一个字
         first_char_of_input = cy[0]
 
-        # 判断是否能接龙（即用户输入的成语第一个字是否与当前成语的最后一个字相同）
+        # 如果没有启用拼音接龙，继续按照字形接龙规则
         if last_char_of_current == first_char_of_input:
-            # 如果能接龙，则返回下一个可以接龙的成语
-            next_chengyu = self.getNextWord(cy)  # 使用原有的接龙逻辑返回下一个成语
-
+            next_chengyu = self.getNextWord(cy)
             if next_chengyu:
-                # 成功接龙后更新上下文，将新接的成语保存到用户的 context 中
                 self.context[wxid] = next_chengyu
-                self.save_json(CONTEXT_FILE, self.context)  # 保存到文件
-                return True,next_chengyu
+                self.save_json(CONTEXT_FILE, self.context)
+                return True, next_chengyu
             else:
-                return False,"没有找到可以接龙的成语。"
-        else:
-            # 如果不能接龙，返回 False
-            return False, f"当前成语为：{current_chengyu} {cy}无法接龙，请尝试其他成语。"
+                return False, "没有找到可以接龙的成语。"
+        elif use_pinyin:
+            last_pinyin_of_current = self.cys.get(current_chengyu)
+            first_pinyin_of_input = self.cys.get(cy)
+
+            # 判断拼音首音是否相同
+            if last_pinyin_of_current == first_pinyin_of_input:
+                next_chengyu = self.getNextWord(cy)
+                if next_chengyu:
+                    self.context[wxid] = next_chengyu
+                    self.save_json(CONTEXT_FILE, self.context)
+                    return True, next_chengyu
+                else:
+                    return False, "没有找到可以接龙的成语。"
+            else:
+                return False, f"当前成语为：{current_chengyu}，{cy}无法接龙，请尝试其他成语。"
 
     def getNextWord(self, cy: str) -> str:
         """获取下一个可以接龙的成语"""
@@ -130,14 +143,10 @@ class Chengyu:
 
 
 cy = Chengyu()
-
 # 测试代码
 if __name__ == "__main__":
     game = Chengyu()
     wxid = "user_123"
 
     # 测试接龙判断
-    print(game.getNext(wxid, "马到成功"))  # 正确的接龙
-    print(game.getNext(wxid, "牛气冲天"))  # 错误的接龙
-    print(game.getNext(wxid, "风和日丽"))  # 错误的接龙
-    print(game.getNext(wxid, "画蛇添足"))  # 再次测试接龙，查看上下文是否更新
+    print(game.getNext(wxid, "老妪能解", use_pinyin=True))  # 启用谐音接龙

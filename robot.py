@@ -121,6 +121,9 @@ class Robot(Job):
                         self.botForward(msg)
                     elif text == "积分":
                         self.get_wx_points(msg)
+
+                    elif text == "类型":
+                        self.get_all_type_msg()
                     return  # 直接跳过，不执行原函数
 
             # 如果没有命中指令，执行原函数
@@ -140,11 +143,14 @@ class Robot(Job):
                 # 处理不同的成语相关指令
                 if flag == "#":
                     if cy.isChengyu(text):
-                        rsp = cy.getNext(msg.sender, text)
-                        if rsp[0]:
-                            rsp += "\n积分+1"
-                            self.sendTextMsg(rsp[1], msg.roomid, msg.sender)
-                            db.update_user_points(msg.sender, 1)
+                        status, res = cy.getNext(msg.sender, text)
+                        if status:
+                            res += "\n积分+1"
+                            self.sendTextMsg(res, msg.roomid, msg.sender)
+                            db.update_user_points(msg.sender, 2)
+                            return
+                        else:
+                            self.sendTextMsg(res, msg.roomid, msg.sender)
                             return
                     elif flag in ["?", "？"]:  # 查词
                         if cy.isChengyu(text):
@@ -199,7 +205,10 @@ class Robot(Job):
         """
         menu = "\n".join(self.BOT_FUNC.keys())
         if menu:
-            self.sendTextMsg(menu, msg.sender)
+            if msg.from_group():
+                self.sendTextMsg(menu, msg.roomid)
+            else:
+                self.sendTextMsg(menu, msg.sender)
             return True
         return False
 
@@ -262,18 +271,20 @@ class Robot(Job):
             if msg.is_at(self.wxid):  # 被@
                 self.toAt(msg)
 
-            else:  # 其他消息
-                self.toChengyu(msg)
-
             return  # 处理完群聊信息，后面就不需要处理了
 
         # 非群聊信息，按消息类型进行处理
         if msg.type == 37:  # 好友请求
             self.autoAcceptFriendRequest(msg)
 
-        elif msg.type == 10000:  # 系统信息
+        elif msg.type == 10000:
+            code = self.wcf.send_pat_msg(msg.roomid, msg.sender)
+            # 系统信息
             self.sayHiToNewFriend(msg)
-
+        elif msg.type == 922746929:
+            self.LOG.info("执行拍一拍类型")
+            code = self.wcf.send_pat_msg(msg.roomid, msg.sender)
+            self.LOG.info(code)
         elif msg.type == 0x01:  # 文本消息
             # 让配置加载更灵活，自己可以更新配置。也可以利用定时任务更新。
             if msg.from_self():
@@ -285,7 +296,7 @@ class Robot(Job):
 
     def onMsg(self, msg: WxMsg) -> int:
         try:
-            self.LOG.info(msg)  # 打印信息
+            # print(msg.type)
             self.processMsg(msg)
         except Exception as e:
             self.LOG.error(e)
@@ -300,7 +311,8 @@ class Robot(Job):
             while wcf.is_receiving_msg():
                 try:
                     msg = wcf.get_msg()
-                    self.LOG.info(msg)
+                    # 信息打印
+                    # self.LOG.info(msg)
                     self.processMsg(msg)
                 except Empty:
                     continue  # Empty message
@@ -340,10 +352,10 @@ class Robot(Job):
 
         # {msg}{ats} 表示要发送的消息内容后面紧跟@，例如 北京天气情况为：xxx @张三
         if ats == "":
-            self.LOG.info(f"To {receiver}: {msg}")
+            # self.LOG.info(f"To {receiver}: {msg}")
             self.wcf.send_text(f"{msg}", receiver, at_list)
         else:
-            self.LOG.info(f"To {receiver}: {ats}\r{msg}")
+            # self.LOG.info(f"To {receiver}: {ats}\r{msg}")
             self.wcf.send_text(f"{ats}\n\n{msg}", receiver, at_list)
 
     def getAllContacts(self) -> dict:
@@ -395,9 +407,17 @@ class Robot(Job):
 
     def get_all_type_msg(self) -> dict:
         """
-        获取所有消息类型
+        获取所有消息类型并将其保存到outtype.json中
         """
-        return self.wcf.get_msg_types()
+        # 获取消息类型字典
+        msg_types = self.wcf.get_msg_types()
+
+        # 保存到 outtype.json 文件中
+        with open('outtype.json', 'w', encoding='utf-8') as file:
+            json.dump(msg_types, file, ensure_ascii=False, indent=4)
+
+        # 返回获取到的字典
+        return msg_types
 
     def weatherReport(self) -> None:
         receivers = self.config.WEATHER
