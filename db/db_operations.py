@@ -12,7 +12,7 @@ def add_user(wechat_id, points=10, is_blacklisted=False, is_super_admin=False):
     """
     添加一个新用户
     :param wechat_id: 用户的微信ID
-    :param points: 用户的初始积分，默认为 0
+    :param points: 用户的初始积分，默认为 10
     :param is_blacklisted: 是否被拉黑，默认为 False
     :param is_super_admin: 是否为超级管理员，默认为 False
     :return: 新创建的 User 对象
