@@ -124,6 +124,8 @@ class Robot(Job):
 
                     elif text == "类型":
                         self.get_all_type_msg()
+                    elif text=="friendList":
+                        self.get_friend_info()
                     return  # 直接跳过，不执行原函数
 
             # 如果没有命中指令，执行原函数
@@ -428,3 +430,8 @@ class Robot(Job):
         report = Weather(self.config.CITY_CODE).get_weather()
         for r in receivers:
             self.sendTextMsg(report, r)
+
+    def get_friend_info(self):
+        res = self.wcf.get_contacts()
+        with open("friendsInfo.json", 'w', encoding='utf-8') as f:
+            json.dump(res, f, ensure_ascii=False, indent=4)
