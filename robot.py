@@ -145,7 +145,7 @@ class Robot(Job):
                     if cy.isChengyu(text):
                         status, res = cy.getNext(msg.sender, text)
                         if status:
-                            res += "\n积分+1"
+                            res += "\n积分+2"
                             self.sendTextMsg(res, msg.roomid, msg.sender)
                             db.update_user_points(msg.sender, 2)
                             return
