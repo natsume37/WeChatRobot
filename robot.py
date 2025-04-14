@@ -432,6 +432,10 @@ class Robot(Job):
             self.sendTextMsg(report, r)
 
     def get_friend_info(self):
+        """
+        获取联系人并保存为json文件
+        @return:
+        """
         res = self.wcf.get_contacts()
         with open("friendsInfo.json", 'w', encoding='utf-8') as f:
             json.dump(res, f, ensure_ascii=False, indent=4)
