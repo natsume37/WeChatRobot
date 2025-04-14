@@ -124,7 +124,7 @@ class Robot(Job):
 
                     elif text == "类型":
                         self.get_all_type_msg()
-                    elif text=="friendList":
+                    elif text == "friendList":
                         self.get_friend_info()
                     return  # 直接跳过，不执行原函数
 
